@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
@@ -23,6 +24,8 @@ import (
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+
+	"github.com/apernet/OpenGFW/api"
 )
 
 const (
@@ -75,12 +78,12 @@ var logFormatMap = map[string]zapcore.EncoderConfig{
 	},
 	"json": {
 		TimeKey:        "time",
-		LevelKey:       "level",
-		NameKey:        "logger",
+		//LevelKey:       "level",
+		//NameKey:        "logger",
 		MessageKey:     "msg",
 		LineEnding:     zapcore.DefaultLineEnding,
 		EncodeLevel:    zapcore.LowercaseLevelEncoder,
-		EncodeTime:     zapcore.EpochMillisTimeEncoder,
+		EncodeTime:     zapcore.RFC3339TimeEncoder,
 		EncodeDuration: zapcore.SecondsDurationEncoder,
 	},
 }
@@ -121,7 +124,7 @@ func initFlags() {
 	rootCmd.PersistentFlags().StringVarP(&cfgFile, "config", "c", "", "config file")
 	rootCmd.PersistentFlags().StringVarP(&pcapFile, "pcap", "p", "", "pcap file (optional)")
 	rootCmd.PersistentFlags().StringVarP(&logLevel, "log-level", "l", envOrDefaultString(appLogLevelEnv, "info"), "log level")
-	rootCmd.PersistentFlags().StringVarP(&logFormat, "log-format", "f", envOrDefaultString(appLogFormatEnv, "console"), "log format")
+	rootCmd.PersistentFlags().StringVarP(&logFormat, "log-format", "f", envOrDefaultString(appLogFormatEnv, "json"), "log format")
 }
 
 func initConfig() {
@@ -154,7 +157,7 @@ func initLogger() {
 		DisableStacktrace: true,
 		Encoding:          strings.ToLower(logFormat),
 		EncoderConfig:     enc,
-		OutputPaths:       []string{"stderr"},
+		OutputPaths:       []string{"stderr", "./OpenGFW_Log.log"},
 		ErrorOutputPaths:  []string{"stderr"},
 	}
 	var err error
@@ -288,12 +291,22 @@ func runMain(cmd *cobra.Command, args []string) {
 		logger.Fatal("failed to compile rules", zap.Error(err))
 	}
 	engineConfig.Ruleset = rs
+	api.LoadRules(rs)
 
 	// Engine
 	en, err := engine.NewEngine(*engineConfig)
 	if err != nil {
 		logger.Fatal("failed to initialize engine", zap.Error(err))
 	}
+
+	// Api
+	go func() {
+        api.CreateServer()
+        logger.Info("Web API server: http://localhost:8080")
+        if err := http.ListenAndServe(":8080", nil); err != nil {
+            logger.Fatal("Web server error", zap.Error(err))
+        }
+    }()
 
 	// Signal handling
 	ctx, cancelFunc := context.WithCancel(context.Background())
