@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	modIO "io"
 	"net/http"
 	"os"
 	"os/signal"
@@ -124,7 +125,7 @@ func initFlags() {
 	rootCmd.PersistentFlags().StringVarP(&cfgFile, "config", "c", "", "config file")
 	rootCmd.PersistentFlags().StringVarP(&pcapFile, "pcap", "p", "", "pcap file (optional)")
 	rootCmd.PersistentFlags().StringVarP(&logLevel, "log-level", "l", envOrDefaultString(appLogLevelEnv, "info"), "log level")
-	rootCmd.PersistentFlags().StringVarP(&logFormat, "log-format", "f", envOrDefaultString(appLogFormatEnv, "json"), "log format")
+	rootCmd.PersistentFlags().StringVarP(&logFormat, "log-format", "f", envOrDefaultString(appLogFormatEnv, "console"), "log format")
 }
 
 func initConfig() {
@@ -168,11 +169,25 @@ func initLogger() {
 	}
 }
 
+func checkUpdate(config cliConfig) {
+	res, err := http.Get(config.StreamConfig.Stream)
+	defer res.Body.Close()
+	rsFile, err := os.Create("rules.yml")
+	_, err = modIO.Copy(rsFile, res.Body)
+	if err != nil {
+		logger.Error("failed to update ruleset", zap.Error(err))
+	} else {
+        reloadChan := make(chan os.Signal, 1)
+        signal.Notify(reloadChan, syscall.SIGHUP)
+	}
+}
+
 type cliConfig struct {
 	IO      cliConfigIO      `mapstructure:"io"`
 	Workers cliConfigWorkers `mapstructure:"workers"`
 	Ruleset cliConfigRuleset `mapstructure:"ruleset"`
 	Replay  cliConfigReplay  `mapstructure:"replay"`
+	StreamConfig  cliConfigStreamConfig  `mapstructure:"streamconfig"`
 }
 
 type cliConfigIO struct {
@@ -199,6 +214,11 @@ type cliConfigWorkers struct {
 type cliConfigRuleset struct {
 	GeoIp   string `mapstructure:"geoip"`
 	GeoSite string `mapstructure:"geosite"`
+}
+
+type cliConfigStreamConfig struct {
+	Enable       bool   `mapstructure:"enable"`
+	Stream         string   `mapstructure:"stream"`
 }
 
 func (c *cliConfig) fillLogger(config *engine.Config) error {
@@ -275,6 +295,11 @@ func runMain(cmd *cobra.Command, args []string) {
 		logger.Fatal("failed to parse config", zap.Error(err))
 	}
 	defer engineConfig.IO.Close() // Make sure to close IO on exit
+	if (config.StreamConfig.Enable) {
+		logger.Info("fetch rules from: " + config.StreamConfig.Stream)
+		checkUpdate(config)
+		logger.Info("rules updated")
+	}
 
 	// Ruleset
 	rawRs, err := ruleset.ExprRulesFromYAML(args[0])

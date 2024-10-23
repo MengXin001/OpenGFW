@@ -27,7 +27,7 @@ func GetSystemInfoHandler(w http.ResponseWriter, r *http.Request) {
 	c, _ := cpu.Info()
 	memStats, _ := mem.VirtualMemory()
 	//n, _ := host.Info()
-	os := "Ubuntu(Debian 22.0.4)"
+	os := "Ubuntu 22.04.5 LTS (Jammy Jellyfish) aarch64(Py3.7.16)"
 	systemInfo := SystemInfo{
 		CPU: c[0].ModelName,
 		CPUUsage: cpuUsage[0],
