@@ -43,7 +43,7 @@ const (
 )
 
 var logger *zap.Logger
-
+var ASGlogger *zap.Logger
 // Flags
 var (
 	cfgFile   string
@@ -125,7 +125,7 @@ func initFlags() {
 	rootCmd.PersistentFlags().StringVarP(&cfgFile, "config", "c", "", "config file")
 	rootCmd.PersistentFlags().StringVarP(&pcapFile, "pcap", "p", "", "pcap file (optional)")
 	rootCmd.PersistentFlags().StringVarP(&logLevel, "log-level", "l", envOrDefaultString(appLogLevelEnv, "info"), "log level")
-	rootCmd.PersistentFlags().StringVarP(&logFormat, "log-format", "f", envOrDefaultString(appLogFormatEnv, "console"), "log format")
+	rootCmd.PersistentFlags().StringVarP(&logFormat, "log-format", "f", envOrDefaultString(appLogFormatEnv, "json"), "log format")
 }
 
 func initConfig() {
@@ -142,6 +142,7 @@ func initConfig() {
 }
 
 func initLogger() {
+	date := time.Now().Format("2006-01-02")
 	level, ok := logLevelMap[strings.ToLower(logLevel)]
 	if !ok {
 		fmt.Printf("unsupported log level: %s\n", logLevel)
@@ -163,6 +164,20 @@ func initLogger() {
 	}
 	var err error
 	logger, err = c.Build()
+	if err != nil {
+		fmt.Printf("failed to initialize logger: %s\n", err)
+		os.Exit(1)
+	}
+	analysisConfig := zap.Config{
+		Level:             zap.NewAtomicLevelAt(level),
+		DisableCaller:     true,
+		DisableStacktrace: true,
+		Encoding:          strings.ToLower(logFormat),
+		EncoderConfig:     enc,
+		OutputPaths:       []string{"./ASG_" + date + ".log"},
+		ErrorOutputPaths:  []string{"stderr"},
+	}
+	ASGlogger, err = analysisConfig.Build()
 	if err != nil {
 		fmt.Printf("failed to initialize logger: %s\n", err)
 		os.Exit(1)
@@ -408,6 +423,53 @@ func (l *engineLogger) TCPStreamPropUpdate(info ruleset.StreamInfo, close bool) 
 		zap.String("dst", info.DstString()),
 		zap.Any("props", info.Props),
 		zap.Bool("close", close))
+
+	tlsFields := []string{"sni", "alpn", "version", "supported_versions"}
+	dnsFields := []string{"questions", "answers"}
+	if tlsPropsMap, ok := info.Props["tls"]; ok {
+		tlsProps := make(map[string]interface{})
+		tlsProps["req"] = make(map[string]interface{})
+		tlsProps["resp"] = make(map[string]interface{})
+
+		if tlsReqMap, ok := tlsPropsMap["req"].(analyzer.PropMap); ok {
+			for _, field := range tlsFields {
+				tlsProps["req"].(map[string]interface{})[field] = nil
+				if v, ok := tlsReqMap[field]; ok {
+					tlsProps["req"].(map[string]interface{})[field] = v
+				}
+			}
+		}
+		if tlsReqMap, ok := tlsPropsMap["resp"].(analyzer.PropMap); ok {
+			for _, field := range tlsFields {
+				tlsProps["resp"].(map[string]interface{})[field] = nil
+				if v, ok := tlsReqMap[field]; ok {
+					tlsProps["resp"].(map[string]interface{})[field] = v
+				}
+			}
+		}
+        ASGlogger.Info("TLS Audit",
+            zap.Int64("id", info.ID),
+            zap.String("src", info.SrcString()),
+            zap.String("dst", info.DstString()),
+            zap.Any("tls", tlsProps),
+		)
+    }
+	if dnsPropsMap, ok := info.Props["dns"]; ok {
+		dnsProps := make(map[string]interface{})
+		for _, field := range dnsFields {
+			dnsProps[field] = nil
+			if v, ok := dnsPropsMap[field]; ok {
+				dnsProps[field] = v
+			}
+		}
+		
+		ASGlogger.Info("DNS Audit",
+		zap.Int64("id", info.ID),
+		zap.String("src", info.SrcString()),
+		zap.String("dst", info.DstString()),
+		zap.Any("dns", dnsProps),
+		)
+	}
 }
 
 func (l *engineLogger) TCPStreamAction(info ruleset.StreamInfo, action ruleset.Action, noMatch bool) {
@@ -448,6 +510,23 @@ func (l *engineLogger) UDPStreamPropUpdate(info ruleset.StreamInfo, close bool) 
 		zap.String("dst", info.DstString()),
 		zap.Any("props", info.Props),
 		zap.Bool("close", close))
+
+	dnsFields := []string{"questions", "answers"}
+	if dnsPropsMap, ok := info.Props["dns"]; ok {
+		dnsProps := make(map[string]interface{})
+		for _, field := range dnsFields {
+			dnsProps[field] = nil
+			if v, ok := dnsPropsMap[field]; ok {
+				dnsProps[field] = v
+			}
+		}
+		ASGlogger.Info("DNS Audit",
+		zap.Int64("id", info.ID),
+		zap.String("src", info.SrcString()),
+		zap.String("dst", info.DstString()),
+		zap.Any("dns", dnsProps),
+		)
+	}
 }
 
 func (l *engineLogger) UDPStreamAction(info ruleset.StreamInfo, action ruleset.Action, noMatch bool) {

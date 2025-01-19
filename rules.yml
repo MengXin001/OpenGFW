@@ -1,0 +1,8 @@
+- name: DNS Audit
+  action: modify
+  modifier:
+    name: dns
+    args:
+      a: "0.0.0.0"
+      aaaa: "::"
+  expr: dns != nil && dns.qr && any(dns.questions, {.name endsWith "hostname.bind"})
